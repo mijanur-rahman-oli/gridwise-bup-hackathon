@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GridWise · Live Energy Optimizer</title>
+
+<!-- Tailwind -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink:   '#0b1120', ink2:  '#0f172a', panel: '#111c33',
+          panel2:'#16233f', border:'#1e293b', border2:'#243349',
+          accent:'#38bdf8', accent2:'#22d3ee',
+          ok:'#34d399', warn:'#fbbf24', danger:'#f87171',
+          solar:'#facc15', grid:'#38bdf8', charge:'#a78bfa',
+          discharge:'#fb7185', soc:'#34d399',
+        },
+        fontFamily: {
+          sans: ['Inter','system-ui','sans-serif'],
+          mono: ['JetBrains Mono','monospace'],
+        },
+      },
+    },
+  };
+</script>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<!-- React 18 + Babel -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  html, body { background:#0b1120; color:#e2e8f0; }
+  body {
+    background: radial-gradient(1200px 600px at 20% -10%, #1e293b 0%, #0b1120 55%) fixed;
+    font-family: Inter, system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #0f172a; }
+  ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #243349; }
+
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .pulse-dot { animation: pulse-dot 2s infinite; }
+
+  @keyframes slideUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .slide-up { animation: slideUp .28s ease-out both; }
+
+  @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+  .skeleton {
+    background: linear-gradient(90deg,#111c33 25%,#16233f 50%,#111c33 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+    border-radius: 8px;
+  }
+
+  input[type=range] {
+    -webkit-appearance: none; height: 4px; background: #1e293b;
+    border-radius: 4px; outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px;
+    background: linear-gradient(135deg,#38bdf8,#22d3ee);
+    border-radius: 50%; cursor: pointer; box-shadow: 0 0 8px #38bdf8;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 16px; height: 16px; border: none;
+    background: linear-gradient(135deg,#38bdf8,#22d3ee);
+    border-radius: 50%; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+/* ═══════════════════════════════════════════════════════════════
+   ICONS (inline SVG — zero deps)
+   ═══════════════════════════════════════════════════════════════ */
+const Icon = ({ name, size = 16, className = "" }) => {
+  const paths = {
+    bolt:    "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
+    check:   "M20 6L9 17l-5-5",
+    x:       "M18 6L6 18M6 6l12 12",
+    plus:    "M12 5v14M5 12h14",
+    trash:   "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
+    refresh: "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
+    play:    "M5 3l14 9-14 9V3z",
+    sun:     "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41M12 8a4 4 0 100 8 4 4 0 000-8z",
+    battery: "M2 7h16v10H2zM20 10v4M6 11v2M10 11v2M14 11v2",
+    grid:    "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+    clock:   "M12 6v6l4 2M22 12a10 10 0 11-20 0 10 10 0 0120 0z",
+    info:    "M12 16v-4M12 8h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z",
+    chart:   "M3 3v18h18M18 17V9M13 17V5M8 17v-3",
+    down:    "M6 9l6 6 6-6",
+    up:      "M18 15l-6-6-6 6",
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+         strokeLinejoin="round" className={className}>
+      <path d={paths[name] || paths.info} />
+    </svg>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   SMALL PRIMITIVES
+   ═══════════════════════════════════════════════════════════════ */
+const Pill = ({ tone = "neutral", children }) => {
+  const tones = {
+    neutral: "bg-slate-800/60 text-slate-300 border-slate-700",
+    ok:      "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+    warn:    "bg-amber-500/10 text-amber-300 border-amber-500/30",
+    danger:  "bg-rose-500/10 text-rose-300 border-rose-500/30",
+    accent:  "bg-sky-500/10 text-sky-300 border-sky-500/30",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1
+      text-[11px] font-semibold rounded-full border ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+};
+
+const Btn = ({ variant = "primary", size = "md", icon, children, ...rest }) => {
+  const base = "inline-flex items-center justify-center gap-2 font-bold rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed";
+  const sizes = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm", lg: "px-5 py-3 text-sm" };
+  const variants = {
+    primary: "bg-gradient-to-r from-sky-400 to-cyan-400 text-slate-900 hover:shadow-lg hover:shadow-sky-400/30 hover:-translate-y-px",
+    ghost:   "bg-slate-800/40 text-slate-300 hover:bg-slate-800 border border-slate-700",
+    danger:  "bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30",
+  };
+  return (
+    <button className={`${base} ${sizes[size]} ${variants[variant]}`} {...rest}>
+      {icon && <Icon name={icon} size={14} />}
+      {children}
+    </button>
+  );
+};
+
+const Card = ({ children, className = "" }) => (
+  <div className={`bg-gradient-to-b from-slate-900/80 to-slate-900/60
+    border border-slate-800 rounded-xl backdrop-blur-sm ${className}`}>
+    {children}
+  </div>
+);
+
+/* ═══════════════════════════════════════════════════════════════
+   HEALTH PILL (live-polls /health)
+   ═══════════════════════════════════════════════════════════════ */
+function HealthPill() {
+  const [state, setState] = useState("checking");
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await fetch("/health");
+        const j = await r.json();
+        if (alive) setState(j.status === "ok" ? "ok" : "err");
+      } catch { if (alive) setState("err"); }
+    };
+    tick();
+    const iv = setInterval(tick, 10000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+  const map = {
+    checking: { cls: "text-slate-400 border-slate-700",    dot: "bg-slate-500",           txt: "Checking…"    },
+    ok:       { cls: "text-emerald-300 border-emerald-500/30", dot: "bg-emerald-400 pulse-dot", txt: "Service ready" },
+    err:      { cls: "text-rose-300 border-rose-500/30",   dot: "bg-rose-400",            txt: "Service down" },
+  };
+  const m = map[state];
+  return (
+    <div className={`inline-flex items-center gap-2 px-3 py-1.5
+      text-xs font-semibold rounded-full border bg-slate-900/60 ${m.cls}`}>
+      <span className={`w-2 h-2 rounded-full ${m.dot}`}></span>
+      {m.txt}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BATTERY SLIDER
+   ═══════════════════════════════════════════════════════════════ */
+function Slider({ label, value, min, max, step = 1, unit, onChange, tone = "sky" }) {
+  const pct = ((value - min) / (max - min)) * 100;
+  const tones = { sky: "text-sky-300", violet: "text-violet-300",
+                  emerald: "text-emerald-300", amber: "text-amber-300", rose: "text-rose-300" };
+  return (
+    <div>
+      <div className="flex justify-between items-baseline mb-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
+        <span className={`text-sm font-mono font-bold ${tones[tone]}`}>
+          {value}<span className="text-[10px] text-slate-500 ml-0.5">{unit}</span>
+        </span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+             onChange={(e) => onChange(parseFloat(e.target.value))}
+             className="w-full" style={{ backgroundImage:
+               `linear-gradient(to right, #38bdf8 ${pct}%, #1e293b ${pct}%)` }} />
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NOTE CHIP (add/remove/edit)
+   ═══════════════════════════════════════════════════════════════ */
+function NoteChip({ index, text, onChange, onRemove, disabled }) {
+  return (
+    <div className="group relative flex items-start gap-2 p-3 bg-slate-900/60
+      border border-slate-800 hover:border-sky-500/40 rounded-lg transition-colors">
+      <span className="flex-shrink-0 w-6 h-6 grid place-items-center rounded-md
+        bg-sky-500/15 text-sky-300 text-xs font-bold mt-0.5">
+        {index + 1}
+      </span>
+      <textarea
+        value={text} onChange={(e) => onChange(e.target.value)}
+        rows={2}
+        disabled={disabled}
+        placeholder="e.g. Solar output will drop to about 20% from 1 PM to 3 PM."
+        className="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-600
+          resize-none outline-none leading-relaxed"
+      />
+      <button onClick={onRemove} disabled={disabled}
+        className="flex-shrink-0 p-1 text-slate-600 hover:text-rose-400
+          opacity-0 group-hover:opacity-100 transition-all disabled:opacity-0">
+        <Icon name="x" size={14} />
+      </button>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HOURLY DATA EDITOR (compact, sortable-ish, expandable row)
+   ═══════════════════════════════════════════════════════════════ */
+function HourlyEditor({ hours, onChange, disabled }) {
+  const update = (i, field, v) => {
+    const next = hours.slice();
+    next[i] = { ...next[i], [field]: parseFloat(v) || 0 };
+    onChange(next);
+  };
+  const totals = useMemo(() => ({
+    demand: hours.reduce((a, h) => a + h.demand_kwh, 0).toFixed(0),
+    solar:  hours.reduce((a, h) => a + h.solar_kwh, 0).toFixed(0),
+    peakT:  Math.max(...hours.map((h) => h.tariff_bdt_per_kwh)).toFixed(1),
+  }), [hours]);
+
+  return (
+    <div>
+      <div className="flex gap-3 mb-2 text-[11px] font-mono">
+        <span className="text-slate-500">Σ demand <span className="text-rose-300">{totals.demand}</span></span>
+        <span className="text-slate-500">Σ solar <span className="text-amber-300">{totals.solar}</span></span>
+        <span className="text-slate-500">peak tariff <span className="text-violet-300">{totals.peakT}৳</span></span>
+      </div>
+      <div className="max-h-72 overflow-y-auto pr-1">
+        <table className="w-full text-xs font-mono">
+          <thead className="sticky top-0 bg-slate-900/95 backdrop-blur z-10">
+            <tr className="text-slate-500 text-[10px] uppercase">
+              <th className="text-left p-1.5 w-8">h</th>
+              <th className="text-left p-1.5">demand kWh</th>
+              <th className="text-left p-1.5">solar kWh</th>
+              <th className="text-left p-1.5">tariff ৳</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hours.map((h, i) => (
+              <tr key={i} className="border-t border-slate-800/50">
+                <td className="p-1 text-slate-500">{String(h.hour).padStart(2, "0")}</td>
+                {["demand_kwh","solar_kwh","tariff_bdt_per_kwh"].map((f) => (
+                  <td key={f} className="p-0.5">
+                    <input type="number" step="0.1" value={h[f]} disabled={disabled}
+                      onChange={(e) => update(i, f, e.target.value)}
+                      className="w-full bg-transparent px-1.5 py-1 rounded text-slate-200
+                        focus:bg-slate-800/60 outline-none focus:ring-1 focus:ring-sky-500/40" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DIRECTIVE CARD
+   ═══════════════════════════════════════════════════════════════ */
+function DirectiveCard({ d, i }) {
+  const tone = d.directive_type === "no_op"
+    ? "border-slate-700"
+    : d.directive_type === "solar_reduction" ? "border-amber-500/60"
+    : d.directive_type === "minimum_battery_reserve" ? "border-emerald-500/60"
+    : d.directive_type === "no_charge_window" ? "border-violet-500/60"
+    : d.directive_type === "no_discharge_window" ? "border-rose-500/60"
+    : d.directive_type === "max_grid_window" ? "border-sky-500/60"
+    : "border-slate-700";
+
+  const tagColor = {
+    solar_reduction: "bg-amber-500/15 text-amber-300",
+    minimum_battery_reserve: "bg-emerald-500/15 text-emerald-300",
+    no_charge_window: "bg-violet-500/15 text-violet-300",
+    no_discharge_window: "bg-rose-500/15 text-rose-300",
+    max_grid_window: "bg-sky-500/15 text-sky-300",
+    no_op: "bg-slate-700/40 text-slate-400",
+  }[d.directive_type] || "bg-slate-700/40 text-slate-400";
+
+  const a = d.structured_adjustment;
+  const parts = [];
+  if (a) {
+    if (a.hours) parts.push({ k: "hours", v: `[${a.hours.join(", ")}]` });
+    if (a.factor !== undefined && a.factor !== null) parts.push({ k: "factor", v: a.factor });
+    if (a.minimum_energy_kwh != null) parts.push({ k: "min_energy", v: `${a.minimum_energy_kwh} kWh` });
+    if (a.max_grid_kwh != null) parts.push({ k: "max_grid", v: `${a.max_grid_kwh} kWh` });
+  }
+
+  return (
+    <div className={`slide-up p-3 rounded-lg bg-slate-900/60 border-l-[3px] ${tone}
+      ${d.applies ? "" : "opacity-70"}`}
+      style={{ animationDelay: `${i * 60}ms` }}>
+      <div className="flex justify-between items-center gap-2 mb-2 flex-wrap">
+        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${tagColor}`}>
+          {d.directive_type}
+        </span>
+        <div className="flex gap-1.5 items-center">
+          <span className="text-[10px] text-slate-500 font-mono">note #{d.note_index}</span>
+          {d.applies
+            ? <Pill tone="ok"><Icon name="check" size={10} /> applied</Pill>
+            : <Pill tone="neutral">ignored</Pill>}
+        </div>
+      </div>
+      <p className="text-xs text-slate-400 leading-relaxed">{d.explanation}</p>
+      {parts.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {parts.map(({ k, v }) => (
+            <span key={k} className="font-mono text-[11px] px-2 py-0.5 rounded
+              bg-slate-800/80 text-cyan-300">
+              {k}: <span className="text-slate-200">{v}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   KPI CARD
+   ═══════════════════════════════════════════════════════════════ */
+function Kpi({ label, value, unit, tone = "sky", icon }) {
+  const colors = {
+    sky: "from-sky-500/20 text-sky-300",
+    emerald: "from-emerald-500/20 text-emerald-300",
+    amber: "from-amber-500/20 text-amber-300",
+    violet: "from-violet-500/20 text-violet-300",
+  };
+  return (
+    <div className={`relative overflow-hidden p-4 rounded-xl bg-slate-900/70
+      border border-slate-800 bg-gradient-to-br ${colors[tone].split(" ")[0]} to-transparent`}>
+      <div className="flex justify-between items-start mb-2">
+        <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
+          {label}
+        </span>
+        {icon && <Icon name={icon} size={14} className={colors[tone].split(" ")[1]} />}
+      </div>
+      <div className={`text-2xl font-extrabold font-mono ${colors[tone].split(" ")[1]}`}>
+        {value}
+      </div>
+      <div className="text-[10px] text-slate-500 font-semibold mt-0.5">{unit}</div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PLAN CHART (Chart.js, animated)
+   ═══════════════════════════════════════════════════════════════ */
+function PlanChart({ plan }) {
+  const ref = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!plan || !ref.current) return;
+    const labels = plan.map((p) => String(p.hour).padStart(2, "0") + ":00");
+    const grid = plan.map((p) => p.grid_kwh);
+    const solar = plan.map((p) => p.solar_used_kwh);
+    const charge = plan.map((p) => p.battery_action === "charge" ? p.battery_kwh : 0);
+    const discharge = plan.map((p) => p.battery_action === "discharge" ? -p.battery_kwh : 0);
+    const soc = plan.map((p) => p.battery_energy_after_kwh);
+
+    if (chartRef.current) chartRef.current.destroy();
+
+    chartRef.current = new Chart(ref.current, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          { label: "Grid",      data: grid,      backgroundColor: "#38bdf8", stack: "e", borderRadius: 3 },
+          { label: "Solar Used",data: solar,     backgroundColor: "#facc15", stack: "e", borderRadius: 3 },
+          { label: "Charge",    data: charge,    backgroundColor: "#a78bfa", stack: "e", borderRadius: 3 },
+          { label: "Discharge", data: discharge, backgroundColor: "#fb7185", stack: "e", borderRadius: 3 },
+          {
+            label: "Battery SOC", type: "line", data: soc,
+            borderColor: "#34d399", backgroundColor: "rgba(52,211,153,.12)",
+            borderWidth: 2.5, tension: 0.35, pointRadius: 3, pointBackgroundColor: "#34d399",
+            yAxisID: "y1", fill: true,
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        animation: { duration: 600, easing: "easeOutQuart" },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "#0b1120", borderColor: "#1e293b", borderWidth: 1, padding: 10,
+            titleColor: "#e2e8f0", bodyColor: "#cbd5e1",
+            callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y.toFixed(2)}` },
+          },
+        },
+        scales: {
+          x: { stacked: true, grid: { color: "rgba(148,163,184,.08)" },
+               ticks: { color: "#94a3b8", font: { size: 10 } } },
+          y: { stacked: true, title: { display: true, text: "kWh", color: "#94a3b8" },
+               grid: { color: "rgba(148,163,184,.08)" }, ticks: { color: "#94a3b8", font: { size: 11 } } },
+          y1: { position: "right", title: { display: true, text: "SOC kWh", color: "#34d399" },
+                grid: { drawOnChartArea: false }, ticks: { color: "#34d399", font: { size: 11 } } },
+        },
+      },
+    });
+  }, [plan]);
+
+  return (
+    <div className="h-72 bg-slate-900/50 rounded-xl border border-slate-800 p-2">
+      <canvas ref={ref}></canvas>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RUN LOG (streaming pipeline stages)
+   ═══════════════════════════════════════════════════════════════ */
+function RunLog({ stages }) {
+  const toneFor = { pending: "text-slate-600", active: "text-sky-300",
+                    done: "text-emerald-300", error: "text-rose-300" };
+  const iconFor = { pending: "clock", active: "refresh", done: "check", error: "x" };
+  return (
+    <div className="space-y-1 font-mono text-[11px]">
+      {stages.map((s, i) => (
+        <div key={i} className={`flex items-center gap-2 ${toneFor[s.state]}`}>
+          <Icon name={iconFor[s.state]} size={11}
+                className={s.state === "active" ? "animate-spin" : ""} />
+          <span className="text-slate-500">[{String(s.t).padStart(6, "0")}s]</span>
+          <span>{s.label}</span>
+          {s.detail && <span className="text-slate-600 ml-auto">{s.detail}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MAIN APP
+   ═══════════════════════════════════════════════════════════════ */
+function App() {
+  const [samples, setSamples] = useState([]);
+  const [scenarioId, setScenarioId] = useState("CUSTOM-01");
+  const [notes, setNotes] = useState([
+    "Facilities will wash the rooftop solar panels from noon until 2 PM. During cleaning, usable solar should be treated as roughly 25% of the forecast.",
+    "The sports office moved next month's registration deadline.",
+  ]);
+  const [battery, setBattery] = useState({
+    capacity_kwh: 220, initial_energy_kwh: 110, minimum_energy_kwh: 40,
+    max_charge_kwh_per_hour: 50, max_discharge_kwh_per_hour: 50,
+  });
+  const [hours, setHours] = useState(() =>
+    Array.from({ length: 24 }, (_, h) => ({
+      hour: h,
+      demand_kwh: 100 + Math.round(40 * Math.sin((h - 6) / 3.2)),
+      solar_kwh: h >= 6 && h <= 17 ? Math.round(180 * Math.sin((h - 6) / 11 * Math.PI)) : 0,
+      tariff_bdt_per_kwh: [6,6,5,5,5,6,8,10,12,14,16,16,15,14,13,14,18,22,28,30,26,18,10,7][h],
+    }))
+  );
+
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [stages, setStages] = useState([]);
+  const [error, setError] = useState(null);
+  const [showRawHours, setShowRawHours] = useState(false);
+
+  /* ── Load samples ─────────────────────────────────────────── */
+  useEffect(() => {
+   fetch("/static/BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json")
+      .then((r) => r.json())
+      .then((j) => setSamples(j.cases || []))
+      .catch(() => {});
+  }, []);
+
+  const loadSample = useCallback((id) => {
+    const c = samples.find((x) => x.id === id);
+    if (!c) return;
+    setScenarioId(c.input.scenario_id);
+    setNotes([...c.input.operator_notes]);
+    setBattery({ ...c.input.battery });
+    setHours(c.input.hours.map((h) => ({ ...h })));
+    setResult(null);
+    setError(null);
+  }, [samples]);
+
+  /* ── Note management ──────────────────────────────────────── */
+  const updateNote = (i, v) => { const n = notes.slice(); n[i] = v; setNotes(n); };
+  const addNote = () => { if (notes.length < 3) setNotes([...notes, ""]); };
+  const removeNote = (i) => setNotes(notes.filter((_, idx) => idx !== i));
+
+  /* ── Live cost preview (client-side linear estimate) ─────── */
+  const previewCost = useMemo(() => {
+    // Rough lower bound: if solar+initial battery are ideally dispatched,
+    // the residual demand must come from the grid. This is an under-estimate.
+    const totalDemand = hours.reduce((a, h) => a + h.demand_kwh, 0);
+    const totalSolar = hours.reduce((a, h) => a + h.solar_kwh, 0);
+    const usableBattery = battery.initial_energy_kwh - battery.minimum_energy_kwh;
+    const residualKwh = Math.max(0, totalDemand - totalSolar - usableBattery);
+    const avgTariff = hours.reduce((a, h) => a + h.tariff_bdt_per_kwh, 0) / 24;
+    return (residualKwh * avgTariff).toFixed(0);
+  }, [hours, battery]);
+
+  const totalDemand = useMemo(() => hours.reduce((a, h) => a + h.demand_kwh, 0).toFixed(0), [hours]);
+  const totalSolar  = useMemo(() => hours.reduce((a, h) => a + h.solar_kwh, 0).toFixed(0), [hours]);
+
+  /* ── Run optimization (with simulated streaming stages) ─── */
+  const run = async () => {
+    setRunning(true);
+    setError(null);
+    setResult(null);
+
+    const cleanNotes = notes.map((s) => s.trim()).filter(Boolean);
+    if (cleanNotes.length === 0) {
+      setError("Provide at least one operator note.");
+      setRunning(false);
+      return;
+    }
+    if (cleanNotes.length > 3) {
+      setError("Maximum 3 operator notes.");
+      setRunning(false);
+      return;
+    }
+    if (hours.length !== 24) {
+      setError("Exactly 24 hourly entries are required.");
+      setRunning(false);
+      return;
+    }
+
+    const t0 = performance.now();
+    const newStages = [
+      { label: "Validating request schema",         state: "active",  t: 0.00 },
+      { label: "LLM interpreting operator notes",   state: "pending", t: 0.00 },
+      { label: "Applying deterministic guardrails", state: "pending", t: 0.00 },
+      { label: "Solving MILP optimization",         state: "pending", t: 0.00 },
+      { label: "Replaying plan against directives", state: "pending", t: 0.00 },
+    ];
+    setStages(newStages);
+
+    const advance = (i, detail) => {
+      setStages((prev) => prev.map((s, idx) => ({
+        ...s,
+        t: (performance.now() - t0) / 1000,
+        state: idx < i ? "done" : idx === i ? "active" : "pending",
+        detail: idx === i ? detail : s.detail,
+      })));
+    };
+
+    advance(0);
+    await sleep(80);
+    advance(1);
+
+    try {
+      const r = await fetch("/optimize-energy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scenario_id: scenarioId || "CUSTOM-01",
+          operator_notes: cleanNotes,
+          hours,
+          battery,
+        }),
+      });
+      const dt = ((performance.now() - t0) / 1000).toFixed(2);
+
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }));
+        throw new Error(err.detail || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+
+      // Rapidly tick the remaining stages to completion
+      advance(2, `${data.directive_interpretation.length} notes`);
+      await sleep(150);
+      advance(3, `${dt}s`);
+      await sleep(120);
+      advance(4, "✓");
+
+      setStages((prev) => prev.map((s) => ({ ...s, state: "done", t: (performance.now() - t0) / 1000 })));
+      setResult({ ...data, elapsed: dt });
+    } catch (e) {
+      setError(e.message);
+      setStages((prev) => prev.map((s) => s.state === "active" ? { ...s, state: "error" } : s));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /* ── Render ───────────────────────────────────────────────── */
+  return (
+    <div className="min-h-screen flex flex-col">
+      {/* ─── Topbar ─── */}
+      <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/70 backdrop-blur-md">
+        <div className="max-w-[1600px] mx-auto px-5 py-3 flex justify-between items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-400
+              grid place-items-center text-slate-900 shadow-lg shadow-sky-400/30">
+              <Icon name="bolt" size={20} />
+            </div>
+            <div>
+              <h1 className="text-lg font-extrabold tracking-tight">GridWise</h1>
+              <p className="text-[11px] text-slate-400">LLM-Assisted Smart Campus Energy Optimizer</p>
+            </div>
+          </div>
+          <HealthPill />
+        </div>
+      </header>
+
+      {/* ─── Body ─── */}
+      <main className="flex-1 max-w-[1600px] w-full mx-auto p-5 grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-5">
+
+        {/* ═══ LEFT: INPUT ═══ */}
+        <div className="space-y-4">
+          {/* Sample loader */}
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Icon name="grid" size={14} className="text-sky-400" />
+              <h2 className="text-xs font-bold uppercase tracking-wider text-sky-400">
+                1 · Scenario Input
+              </h2>
+            </div>
+
+            <label className="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">
+              Load public sample
+            </label>
+            <select
+              onChange={(e) => e.target.value && loadSample(e.target.value)}
+              disabled={running}
+              className="w-full bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2
+                text-sm text-slate-200 focus:outline-none focus:border-sky-500/60">
+              <option value="">— Choose a sample —</option>
+              {samples.map((c) => (
+                <option key={c.id} value={c.id}>{c.id} · {c.label}</option>
+              ))}
+            </select>
+
+            <label className="block text-[11px] uppercase tracking-wider text-slate-500 font-semibold mt-4 mb-1.5">
+              Scenario ID
+            </label>
+            <input value={scenarioId} onChange={(e) => setScenarioId(e.target.value)}
+              disabled={running}
+              className="w-full bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2
+                text-sm font-mono text-slate-200 focus:outline-none focus:border-sky-500/60" />
+          </Card>
+
+          {/* Notes */}
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Icon name="info" size={14} className="text-sky-400" />
+                <h2 className="text-xs font-bold uppercase tracking-wider text-sky-400">
+                  Operator Notes
+                </h2>
+              </div>
+              <Pill tone="accent">{notes.length}/3</Pill>
+            </div>
+
+            <div className="space-y-2">
+              {notes.map((n, i) => (
+                <NoteChip key={i} index={i} text={n}
+                  onChange={(v) => updateNote(i, v)}
+                  onRemove={() => removeNote(i)}
+                  disabled={running} />
+              ))}
+            </div>
+
+            {notes.length < 3 && (
+              <button onClick={addNote} disabled={running}
+                className="mt-2 w-full py-2 text-xs font-semibold text-slate-400
+                  border border-dashed border-slate-700 rounded-lg
+                  hover:border-sky-500/40 hover:text-sky-300 transition-colors
+                  flex items-center justify-center gap-2 disabled:opacity-40">
+                <Icon name="plus" size={12} /> Add note
+              </button>
+            )}
+          </Card>
+
+          {/* Battery */}
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Icon name="battery" size={14} className="text-emerald-400" />
+              <h2 className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                Battery Parameters
+              </h2>
+            </div>
+            <div className="space-y-3">
+              <Slider label="Capacity" unit="kWh" tone="sky"
+                value={battery.capacity_kwh} min={50} max={500} step={5}
+                onChange={(v) => setBattery({ ...battery, capacity_kwh: v })} />
+              <Slider label="Initial energy" unit="kWh" tone="emerald"
+                value={battery.initial_energy_kwh} min={0} max={battery.capacity_kwh}
+                onChange={(v) => setBattery({ ...battery, initial_energy_kwh: v })} />
+              <Slider label="Minimum reserve" unit="kWh" tone="amber"
+                value={battery.minimum_energy_kwh} min={0} max={battery.capacity_kwh}
+                onChange={(v) => setBattery({ ...battery, minimum_energy_kwh: v })} />
+              <Slider label="Max charge / hour" unit="kWh" tone="violet"
+                value={battery.max_charge_kwh_per_hour} min={5} max={150}
+                onChange={(v) => setBattery({ ...battery, max_charge_kwh_per_hour: v })} />
+              <Slider label="Max discharge / hour" unit="kWh" tone="rose"
+                value={battery.max_discharge_kwh_per_hour} min={5} max={150}
+                onChange={(v) => setBattery({ ...battery, max_discharge_kwh_per_hour: v })} />
+            </div>
+          </Card>
+
+          {/* Hourly data */}
+          <Card className="p-4">
+            <button onClick={() => setShowRawHours(!showRawHours)}
+              className="w-full flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Icon name="clock" size={14} className="text-violet-400" />
+                <h2 className="text-xs font-bold uppercase tracking-wider text-violet-400">
+                  Hourly Data (24)
+                </h2>
+              </div>
+              <Icon name={showRawHours ? "up" : "down"} size={14} className="text-slate-500" />
+            </button>
+            {showRawHours && <HourlyEditor hours={hours} onChange={setHours} disabled={running} />}
+            {!showRawHours && (
+              <div className="text-[11px] font-mono text-slate-500 space-y-0.5">
+                <div>Σ demand: <span className="text-rose-300">{totalDemand}</span> kWh</div>
+                <div>Σ solar: <span className="text-amber-300">{totalSolar}</span> kWh</div>
+              </div>
+            )}
+          </Card>
+
+          {/* Run button */}
+          <div className="sticky bottom-4">
+            <Btn size="lg" className="w-full" disabled={running}
+              onClick={run} icon={running ? "refresh" : "play"}>
+              {running ? "Optimizing…" : "Run Optimization"}
+            </Btn>
+            <div className="text-center text-[11px] text-slate-500 mt-2 font-mono">
+              est. cost ≥ <span className="text-sky-300">{previewCost}</span> BDT (lower bound)
+            </div>
+          </div>
+        </div>
+
+        {/* ═══ RIGHT: OUTPUT ═══ */}
+        <div className="space-y-4">
+          {/* Run log / empty state */}
+          {stages.length > 0 && (
+            <Card className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Icon name="refresh" size={14} className={`text-sky-400 ${running ? "animate-spin" : ""}`} />
+                <h2 className="text-xs font-bold uppercase tracking-wider text-sky-400">
+                  Pipeline
+                </h2>
+              </div>
+              <RunLog stages={stages} />
+            </Card>
+          )}
+
+          {error && (
+            <Card className="p-4 border-rose-500/40 bg-rose-500/5">
+              <div className="flex items-start gap-2">
+                <Icon name="x" size={16} className="text-rose-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-rose-400">
+                    Error
+                  </div>
+                  <div className="text-sm text-rose-200 mt-1">{error}</div>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {!result && !error && stages.length === 0 && (
+            <Card className="p-12 text-center border-dashed border-slate-800">
+              <Icon name="chart" size={40} className="text-slate-700 mx-auto mb-3" />
+              <p className="text-slate-500 text-sm">
+                Load a sample or edit inputs, then click <span className="text-sky-400 font-semibold">Run Optimization</span>.
+              </p>
+            </Card>
+          )}
+
+          {result && (
+            <>
+              {/* KPIs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 slide-up">
+                <Kpi label="Total cost" value={result.total_cost_bdt.toFixed(2)}
+                     unit="BDT" tone="sky" icon="chart" />
+                <Kpi label="Grid import" value={result.total_grid_kwh.toFixed(1)}
+                     unit="kWh" tone="violet" icon="grid" />
+                <Kpi label="Peak hour" value={result.peak_grid_kwh.toFixed(1)}
+                     unit="kWh" tone="rose" icon="bolt" />
+                <Kpi label="Solved in" value={result.elapsed}
+                     unit="seconds" tone="emerald" icon="clock" />
+              </div>
+
+              <Card className="p-4 slide-up">
+                <div className="flex items-start gap-2">
+                  <Icon name="info" size={14} className="text-sky-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-slate-300 leading-relaxed">{result.plan_summary}</p>
+                </div>
+              </Card>
+
+              {/* Directives */}
+              <Card className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Icon name="info" size={14} className="text-amber-400" />
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                      Directive Interpretation
+                    </h2>
+                  </div>
+                  <Pill tone="accent">
+                    {result.directive_interpretation.filter((d) => d.applies).length} applied
+                  </Pill>
+                </div>
+                <div className="space-y-2">
+                  {result.directive_interpretation.map((d, i) => (
+                    <DirectiveCard key={d.note_index} d={d} i={i} />
+                  ))}
+                </div>
+              </Card>
+
+              {/* Chart */}
+              <Card className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Icon name="chart" size={14} className="text-emerald-400" />
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                      24-Hour Schedule
+                    </h2>
+                  </div>
+                  <div className="flex gap-2 flex-wrap text-[11px] text-slate-400">
+                    {[
+                      ["Grid", "grid"], ["Solar", "solar"],
+                      ["Charge", "charge"], ["Discharge", "discharge"], ["SOC", "soc"],
+                    ].map(([lbl, cls]) => (
+                      <span key={lbl} className="flex items-center gap-1.5">
+                        <span className={`w-2.5 h-2.5 rounded-sm bg-${cls}`}
+                              style={{ background: {
+                                grid: "#38bdf8", solar: "#facc15", charge: "#a78bfa",
+                                discharge: "#fb7185", soc: "#34d399",
+                              }[cls] }} />
+                        {lbl}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <PlanChart plan={result.hourly_plan} />
+              </Card>
+
+              {/* Raw */}
+              <Card className="p-4">
+                <details>
+                  <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Raw Response JSON
+                  </summary>
+                  <pre className="mt-3 p-3 bg-slate-950/60 rounded-lg text-[11px]
+                    font-mono text-slate-400 overflow-auto max-h-64">
+                    {JSON.stringify(result, null, 2)}
+                  </pre>
+                </details>
+              </Card>
+            </>
+          )}
+        </div>
+      </main>
+
+      <footer className="text-center text-[11px] text-slate-600 py-4 border-t border-slate-800">
+        BUP CSE Fest 2026 · GridWise Preliminary · LLM → Guardrails → MILP Optimizer
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
